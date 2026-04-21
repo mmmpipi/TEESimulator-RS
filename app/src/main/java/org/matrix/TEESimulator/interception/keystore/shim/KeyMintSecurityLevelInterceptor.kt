@@ -1045,6 +1045,13 @@ private fun KeyMintAttestation.toAuthorizations(
 ): Array<Authorization> {
     val authList = mutableListOf<Authorization>()
 
+    val validSecurityLevel = when (securityLevel) {
+        SecurityLevel.TRUSTED_ENVIRONMENT -> SecurityLevel.TRUSTED_ENVIRONMENT
+        SecurityLevel.STRONGBOX -> SecurityLevel.STRONGBOX
+        SecurityLevel.SOFTWARE -> SecurityLevel.SOFTWARE
+        else -> SecurityLevel.TRUSTED_ENVIRONMENT
+    }
+
     fun createAuth(tag: Int, value: KeyParameterValue): Authorization {
         val param =
             KeyParameter().apply {
@@ -1053,7 +1060,7 @@ private fun KeyMintAttestation.toAuthorizations(
             }
         return Authorization().apply {
             this.keyParameter = param
-            this.securityLevel = securityLevel
+            this.securityLevel = validSecurityLevel
         }
     }
 
