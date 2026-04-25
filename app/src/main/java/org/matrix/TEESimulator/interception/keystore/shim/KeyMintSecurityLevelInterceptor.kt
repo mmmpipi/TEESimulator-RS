@@ -1147,5 +1147,11 @@ private fun KeyMintAttestation.toAuthorizations(
 
     authList.add(createSwAuth(Tag.USER_ID, KeyParameterValue.integer(callingUid / 100000)))
 
+    // Sort by tag number — real KeyMint HAL always returns AuthorizationLists in tag order
+    // (AOSP KeyMint specification, AuthorizationList is defined as SEQUENCE OF,
+    // DER-encoded with fields sorted by tag). Without sorting, the Parcel byte layout
+    // produces a recognizable fingerprint that detectors can match.
+    authList.sortBy { it.keyParameter.tag }
+
     return authList.toTypedArray()
 }
