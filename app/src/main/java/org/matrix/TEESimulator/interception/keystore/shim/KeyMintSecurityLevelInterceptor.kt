@@ -555,7 +555,7 @@ class KeyMintSecurityLevelInterceptor(
                 certificate = null
                 certificateChain = null
                 authorizations = parsedParams.toAuthorizations(callingUid, securityLevel)
-                modificationTimeMs = System.currentTimeMillis()
+                modificationTimeMs = System.currentTimeMillis() + 1L
             }
             val response = KeyEntryResponse().apply {
                 this.metadata = metadata
@@ -808,7 +808,7 @@ class KeyMintSecurityLevelInterceptor(
                 key = normalizedKeyDescriptor
                 CertificateHelper.updateCertificateChain(this, chain.toTypedArray()).getOrThrow()
                 authorizations = params.toAuthorizations(callingUid, securityLevel)
-                modificationTimeMs = System.currentTimeMillis()
+                modificationTimeMs = System.currentTimeMillis() + 1L
             }
         return KeyEntryResponse().apply {
             this.metadata = metadata
@@ -1104,7 +1104,7 @@ private fun KeyMintAttestation.toAuthorizations(
         authList.add(createAuth(Tag.MAX_BOOT_LEVEL, KeyParameterValue.integer(this.maxBootLevel)))
     }
 
-    if (this.noAuthRequired != false) {
+    if (this.noAuthRequired == true) {
         authList.add(createAuth(Tag.NO_AUTH_REQUIRED, KeyParameterValue.boolValue(true)))
     }
     authList.add(createAuth(Tag.ORIGIN, KeyParameterValue.origin(this.origin ?: KeyOrigin.GENERATED)))

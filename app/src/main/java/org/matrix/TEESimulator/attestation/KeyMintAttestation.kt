@@ -147,55 +147,67 @@ data class KeyMintAttestation(
 
 // --- Private helper extension functions for parsing KeyParameter arrays ---
 
+/**
+ * The upper 4 bits of a KeyParameter tag encode the security level
+ * (SOFTWARE=0, TRUSTED_ENVIRONMENT=1, STRONGBOX=2). Mask them out when
+ * comparing against bare Tag enum values so that non-standard security-level
+ * encodings (e.g., probes using level 9) do not silently drop parameters.
+ */
+private const val TAG_SECURITY_LEVEL_MASK = 0x0FFFFFFF
+
+/** True when [raw] and [expected] match after stripping security-level bits from both. */
+private inline fun tagMatches(raw: Int, expected: Int): Boolean =
+    (raw and TAG_SECURITY_LEVEL_MASK) == (expected and TAG_SECURITY_LEVEL_MASK)
+
 /** Maps to AOSP field = Integer */
 private fun Array<KeyParameter>.findInteger(tag: Int): Int? =
-    this.find { it.tag == tag }?.value?.integer
+    this.find { tagMatches(it.tag, tag) }?.value?.integer
 
 /** Maps to AOSP field = Algorithm */
 private fun Array<KeyParameter>.findAlgorithm(tag: Int): Int? =
-    this.find { it.tag == tag }?.value?.algorithm
+    this.find { tagMatches(it.tag, tag) }?.value?.algorithm
 
 /** Maps to AOSP field = EcCurve */
 private fun Array<KeyParameter>.findEcCurve(tag: Int): Int? =
-    this.find { it.tag == tag }?.value?.ecCurve
+    this.find { tagMatches(it.tag, tag) }?.value?.ecCurve
 
 /** Maps to AOSP field = Origin */
 private fun Array<KeyParameter>.findOrigin(tag: Int): Int? =
-    this.find { it.tag == tag }?.value?.origin
+    this.find { tagMatches(it.tag, tag) }?.value?.origin
 
 /** Maps to AOSP field = LongInteger */
 private fun Array<KeyParameter>.findLongInteger(tag: Int): BigInteger? =
-    this.find { it.tag == tag }?.value?.longInteger?.toBigInteger()
+    this.find { tagMatches(it.tag, tag) }?.value?.longInteger?.toBigInteger()
 
 /** Maps to AOSP field = DateTime */
 private fun Array<KeyParameter>.findDate(tag: Int): Date? =
-    this.find { it.tag == tag }?.value?.dateTime?.let { Date(it) }
+    this.find { tagMatches(it.tag, tag) }?.value?.dateTime?.let { Date(it) }
 
 /** Maps to AOSP field = Blob */
 private fun Array<KeyParameter>.findBlob(tag: Int): ByteArray? =
-    this.find { it.tag == tag }?.value?.blob
+    this.find { tagMatches(it.tag, tag) }?.value?.blob
 
 /** Maps to AOSP field = BlockMode (Repeated) */
 private fun Array<KeyParameter>.findAllBlockMode(tag: Int): List<Int> =
-    this.filter { it.tag == tag }.map { it.value.blockMode }
+    this.filter { tagMatches(it.tag, tag) }.map { it.value.blockMode }
 
 /** Maps to AOSP field = BlockMode (Repeated) */
 private fun Array<KeyParameter>.findAllPaddingMode(tag: Int): List<Int> =
-    this.filter { it.tag == tag }.map { it.value.paddingMode }
+    this.filter { tagMatches(it.tag, tag) }.map { it.value.paddingMode }
 
 /** Maps to AOSP field = KeyPurpose (Repeated) */
 private fun Array<KeyParameter>.findAllKeyPurpose(tag: Int): List<Int> =
-    this.filter { it.tag == tag }.map { it.value.keyPurpose }
+    this.filter { tagMatches(it.tag, tag) }.map { it.value.keyPurpose }
 
 /** Maps to AOSP field = Digest (Repeated) */
 private fun Array<KeyParameter>.findAllDigests(tag: Int): List<Int> =
-    this.filter { it.tag == tag }.map { it.value.digest }
+    this.filter { tagMatches(it.tag, tag) }.map { it.value.digest }
 
 private fun Array<KeyParameter>.findBoolean(tag: Int): Boolean? =
-    if (this.any { it.tag == tag }) true else null
+    if (this.any { tagMatches(it.tag, tag) }) true else null
 
 private fun Array<KeyParameter>.deriveKeySizeFromCurve(): Int {
-    val curveId = this.find { it.tag == Tag.EC_CURVE }?.value?.ecCurve ?: return 0
+    val curveId = this.find { tagMatches(it.tag, Tag.EC_CURVE) }?.value?.ecCurve ?: return 0
     return when (curveId) {
         EcCurve.P_224 -> 224
         EcCurve.P_256 -> 256
@@ -212,7 +224,7 @@ private fun Array<KeyParameter>.deriveKeySizeFromCurve(): Int {
  */
 private fun Array<KeyParameter>.deriveEcCurveName(): String {
     // 1. Try to find explicit EC_CURVE tag
-    val curveParam = this.find { it.tag == Tag.EC_CURVE }
+    val curveParam = this.find { tagMatches(it.tag, Tag.EC_CURVE) }
 
     if (curveParam != null) {
         val curveId = curveParam.value.ecCurve
