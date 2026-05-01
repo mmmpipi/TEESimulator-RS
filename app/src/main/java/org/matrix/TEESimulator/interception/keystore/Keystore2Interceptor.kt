@@ -3,6 +3,7 @@ package org.matrix.TEESimulator.interception.keystore
 import android.annotation.SuppressLint
 import android.hardware.security.keymint.SecurityLevel
 import android.os.Build
+import android.os.BadParcelableException
 import android.os.IBinder
 import android.os.Parcel
 import android.system.keystore2.Domain
@@ -175,16 +176,34 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
             if (code == UPDATE_SUBCOMPONENT_TRANSACTION)
                 return handleUpdateSubcomponent(callingUid, data)
 
-            data.enforceInterface(IKeystoreService.DESCRIPTOR)
-            val descriptor =
+            // Fallback: if standard readTypedObject fails, attempt manual alias extraction
+            // for non-AIDL parcel layouts (e.g. DuckDetector raw binder requests).
+            val descPos = data.dataPosition()
+            val descriptor = try {
+                data.enforceInterface(IKeystoreService.DESCRIPTOR)
                 data.readTypedObject(KeyDescriptor.CREATOR)
-                    ?: return TransactionResult.ContinueAndSkipPost
+            } catch (e: BadParcelableException) {
+                SystemLogger.warning("[TX_ID: $txId] BadParcelableException reading KeyDescriptor, trying manual extraction")
+                null
+            }
+
+            val effectiveAlias = when {
+                descriptor != null && !descriptor.alias.isNullOrBlank() -> descriptor.alias
+                descriptor != null && descriptor.domain == Domain.KEY_ID -> null
+                else -> {
+                    data.setDataPosition(descPos)
+                    val alias = tryExtractAliasFromParcel(data)
+                    if (alias != null) {
+                        SystemLogger.info("[TX_ID: $txId] Manually extracted alias='$alias' from non-AIDL parcel")
+                    }
+                    alias
+                }
+            }
 
             if (code == DELETE_KEY_TRANSACTION) {
-                val keyId =
-                    if (descriptor.alias != null) {
-                        KeyIdentifier(callingUid, descriptor.alias)
-                    } else if (descriptor.domain == Domain.KEY_ID) {
+                val keyId = when {
+                    effectiveAlias != null -> KeyIdentifier(callingUid, effectiveAlias)
+                    descriptor != null && descriptor.domain == Domain.KEY_ID -> {
                         KeyMintSecurityLevelInterceptor.findGeneratedKeyByKeyId(
                             callingUid, descriptor.nspace
                         )?.let { info ->
@@ -192,7 +211,9 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                                 .find { it.value.nspace == info.nspace && it.key.uid == callingUid }
                                 ?.key
                         }
-                    } else null
+                    }
+                    else -> null
+                }
 
                 if (keyId != null) {
                     val isSoftwareKey =
@@ -209,24 +230,24 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                 return TransactionResult.ContinueAndSkipPost
             }
 
-            if (descriptor.alias == null) {
+            if (effectiveAlias == null) {
                 return TransactionResult.ContinueAndSkipPost
             }
-            val keyId = KeyIdentifier(callingUid, descriptor.alias)
+            val keyId = KeyIdentifier(callingUid, effectiveAlias)
 
             val response = KeyMintSecurityLevelInterceptor.getGeneratedKeyResponse(keyId)
             if (response == null) {
                 if (deletedSoftwareKeys.remove(keyId)) {
-                    SystemLogger.info("[TX_ID: $txId] Returning KEY_NOT_FOUND for deleted key ${descriptor.alias}")
+                    SystemLogger.info("[TX_ID: $txId] Returning KEY_NOT_FOUND for deleted key $effectiveAlias")
                     return InterceptorUtils.createErrorReply(RESPONSE_KEY_NOT_FOUND)
                 }
                 return TransactionResult.Continue
             }
 
             if (KeyMintSecurityLevelInterceptor.isAttestationKey(keyId))
-                SystemLogger.info("${descriptor.alias} was an attestation key")
+                SystemLogger.info("$effectiveAlias was an attestation key")
 
-            SystemLogger.info("[TX_ID: $txId] Found generated response for ${descriptor.alias}:")
+            SystemLogger.info("[TX_ID: $txId] Found generated response for $effectiveAlias:")
             response.metadata?.authorizations?.forEach {
                 KeyMintParameterLogger.logParameter(it.keyParameter)
             }
@@ -295,9 +316,17 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
                 }
         } else if (code == GET_KEY_ENTRY_TRANSACTION) {
             data.enforceInterface(IKeystoreService.DESCRIPTOR)
-            val keyDescriptor =
+            val keyDescriptor = try {
                 data.readTypedObject(KeyDescriptor.CREATOR)
-                    ?: return TransactionResult.SkipTransaction
+            } catch (e: BadParcelableException) {
+                SystemLogger.warning(
+                    "[TX_ID: $txId] Failed to read KeyDescriptor in post-transact: ${e.message}"
+                )
+                null
+            }
+            if (keyDescriptor == null) {
+                return TransactionResult.SkipTransaction
+            }
 
             logTransaction(
                 txId,
@@ -493,5 +522,33 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
         )
 
         return InterceptorUtils.createSuccessReply(writeResultCode = false)
+    }
+
+    /**
+     * Attempts to extract a key alias from a parcel whose KeyDescriptor layout does not
+     * conform to the standard AIDL format. This happens when callers (e.g. DuckDetector) send
+     * raw binder transactions with manually serialised fields in a different order.
+     *
+     * The caller MUST have positioned [data] immediately after the interface descriptor token
+     * (i.e. where a `KeyDescriptor` is expected to start).
+     */
+    private fun tryExtractAliasFromParcel(data: Parcel): String? {
+        val startPos = data.dataPosition()
+
+        if (data.readInt() != 0) {
+            data.readString()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+
+        // DuckDetector writes domain(int) & nspace(long) before the alias string,
+        // so alias sits 16 bytes deeper than AIDL expects.
+        data.setDataPosition(startPos)
+        if (data.dataSize() - startPos >= 20) {
+            data.readInt()
+            data.readInt()
+            data.readLong()
+            data.readString()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+
+        return null
     }
 }
