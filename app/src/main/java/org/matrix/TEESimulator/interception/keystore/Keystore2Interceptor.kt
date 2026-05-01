@@ -178,9 +178,9 @@ object Keystore2Interceptor : AbstractKeystoreInterceptor() {
 
             // Fallback: if standard readTypedObject fails, attempt manual alias extraction
             // for non-AIDL parcel layouts (e.g. DuckDetector raw binder requests).
+            data.enforceInterface(IKeystoreService.DESCRIPTOR)
             val descPos = data.dataPosition()
             val descriptor = try {
-                data.enforceInterface(IKeystoreService.DESCRIPTOR)
                 data.readTypedObject(KeyDescriptor.CREATOR)
             } catch (e: BadParcelableException) {
                 SystemLogger.warning("[TX_ID: $txId] BadParcelableException reading KeyDescriptor, trying manual extraction")
